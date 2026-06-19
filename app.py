@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import requests
 import aiohttp
 import pandas as pd
 import streamlit as st
@@ -99,7 +100,8 @@ async def buscar_items_ragnarok_async(
                     "Mapa": detalhes.get("mapName"),
                     "X": detalhes.get("xpos"),
                     "Y": detalhes.get("ypos"),
-                    "Imagem": detalhes.get("databaseImgPath")
+                    "Imagem": detalhes.get("databaseImgPath"),
+                    "ItemId": detalhes.get("itemId"),
                 })
             return resultados
     except Exception as e:
@@ -187,6 +189,35 @@ async def buscar_detalhes_item(
         )
         return {}
 
+def limpar_descricao_rag(texto):
+    if not texto:
+        return ""
+
+    texto = re.sub(r"\^[0-9A-Fa-f]{6}", "", texto)
+    return texto
+
+@st.cache_data(ttl=86400)
+def buscar_item_ragnaplace(item_id):
+    try:
+        url = (
+            f"https://api.ragnaplace.com/api/db/item/"
+            f"{item_id}?gateway=laro-pt"
+        )
+
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+        if response.status_code != 200:
+            return None
+
+        return response.json()["data"]
+
+    except Exception as e:
+        print(e)
+        return None
+
 st.set_page_config(
     page_title="Ragnarok Search",
     layout="wide"
@@ -234,9 +265,10 @@ if st.button("Pesquisar"):
             if len(df_item) == 0:
                 continue
             st.subheader(f"📦 {item_pesquisado}")
-            st.dataframe(
+            st.data_editor(
                 df_item[
                     [
+                        "Imagem",
                         "Item",
                         "Preço",
                         "Quantidade",
@@ -244,13 +276,16 @@ if st.button("Pesquisar"):
                         "Vendedor",
                         "Mapa",
                         "X",
-                        "Y",
-                        "Imagem"
+                        "Y"
                     ]
                 ],
+                column_config={
+                    "Imagem": st.column_config.ImageColumn(
+                        "Imagem",
+                        help="Imagem do item",
+                        width="small"
+                    )
+                },
+                hide_index=True,
                 width="stretch"
-            )
-    else:
-        st.warning(
-            "Nenhum resultado encontrado"
-        )
+            )   

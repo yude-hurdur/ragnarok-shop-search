@@ -91,8 +91,7 @@ async def buscar_items_ragnarok_async(
                 )
                 resultados.append({
                     "Pesquisa": search_word,
-                    "Item": item.get("itemName"),
-                    "Nome Completo": detalhes.get("itemFullName"),
+                    "Item": detalhes.get("itemFullName"),
                     "Preço": item.get("itemPrice"),
                     "Quantidade": item.get("itemCnt"),
                     "Loja": item.get("storeName"),

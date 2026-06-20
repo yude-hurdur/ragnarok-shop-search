@@ -6,9 +6,6 @@ import aiohttp
 import pandas as pd
 import streamlit as st
 
-import json
-import re
-
 def extrair_dados_items_do_html(response_text, search_word):
     try:
         partes = re.findall(
@@ -321,40 +318,3 @@ if st.button("Pesquisar"):
                 hide_index=True,
                 width="stretch"
             )   
-            item_escolhido = st.selectbox(
-                f"🔍 Ver descrição ({item_pesquisado})",
-                df_item["Item"].tolist(),
-                key=f"desc_{item_pesquisado}"
-            )
-            registro = df_item[
-                df_item["Item"] == item_escolhido
-            ].iloc[0]
-            dados_item = buscar_item_ragnaplace(
-                registro["ItemId"]
-            )
-            if dados_item:
-                descricao = limpar_descricao_rag(
-                    dados_item.get(
-                        "identifiedDescriptionName",
-                        "Sem descrição"
-                    )
-                )
-
-                col1, col2 = st.columns([1, 3])
-
-                with col1:
-                    st.image(
-                        registro["Imagem"],
-                        width=180
-                    )
-
-                with col2:
-                    st.markdown(
-                        f"### {dados_item['identifiedDisplayName']}"
-                    )
-
-                st.text(descricao)           
-            else:
-                st.warning(
-                    "Nenhum resultado encontrado"
-                )

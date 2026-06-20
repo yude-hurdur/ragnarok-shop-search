@@ -6,7 +6,6 @@ import aiohttp
 import pandas as pd
 import streamlit as st
 
-
 def extrair_dados_items_do_html(response_text, search_word):
     try:
         partes = re.findall(
@@ -297,8 +296,12 @@ if st.button("Pesquisar"):
             if len(df_item) == 0:
                 continue
             st.subheader(f"📦 {item_pesquisado}")
+            df_exibicao = df_item.copy()
+            df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
+                lambda item_id: f"https://ragnaplace.com/pt/laro-pt/item/{item_id}"
+            )
             st.data_editor(
-                df_item[
+                df_exibicao[
                     [
                         "Imagem",
                         "Item",
@@ -308,7 +311,8 @@ if st.button("Pesquisar"):
                         "Vendedor",
                         "Mapa",
                         "X",
-                        "Y"
+                        "Y",
+                        "Detalhes",
                     ]
                 ],
                 column_config={
@@ -316,8 +320,12 @@ if st.button("Pesquisar"):
                         "Imagem",
                         help="Imagem do item",
                         width="small"
+                    ),
+                    "Detalhes": st.column_config.LinkColumn(
+                        "Detalhes",
+                        display_text="🔎 ragnaplace"
                     )
                 },
                 hide_index=True,
                 width="stretch"
-            )   
+            )

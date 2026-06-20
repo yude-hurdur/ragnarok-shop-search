@@ -8,64 +8,36 @@ import streamlit as st
 
 def extrair_dados_items_do_html(response_text, search_word):
     try:
-        partes = re.findall(
-            r'self\.__next_f\.push\(\[1,"(.*?)"\]\)',
-            response_text,
-            flags=re.DOTALL
-        )
-        if partes:
-            conteudo = "".join(partes)
-            try:
-                conteudo = bytes(
-                    conteudo,
-                    "utf-8"
-                ).decode(
-                    "unicode_escape"
-                )
-            except Exception:
-                pass
-        else:
-            conteudo = response_text
         match = re.search(
-            r'"queryParams":\{.*?\},"list":(\[.*?\]),"totalCount":(\d+)',
-            conteudo,
-            flags=re.DOTALL
+            r'\\"queryParams\\":\{.*?\},\\"list\\":(\[.*?\]),\\"totalCount\\":(\d+)',
+            response_text,
+            re.DOTALL
         )
         if not match:
-            match = re.search(
-                r'\\"queryParams\\":\{.*?\},\\"list\\":(\[.*?\]),\\"totalCount\\":(\d+)',
-                response_text,
-                flags=re.DOTALL
-            )
-            if not match:
-                print(f"NÃO ACHOU DADOS PARA {search_word}")
-                return []
-            lista_json = match.group(1)
-            lista_json = bytes(
-                lista_json,
-                "utf-8"
-            ).decode(
-                "unicode_escape"
-            )
-        else:
-            lista_json = match.group(1)
+            print(f"NÃO ACHOU DADOS PARA {search_word}")
+            return []
+        lista_json = match.group(1)
+        lista_json = lista_json.encode(
+            "utf-8"
+        ).decode(
+            "unicode_escape"
+        )
+        lista_json = (
+            lista_json
+            .encode("latin1")
+            .decode("utf-8")
+        )
         items = json.loads(lista_json)
+
         print(
             f"{search_word}: {len(items)} itens encontrados"
         )
+        print(items[0])
         return items
-
     except Exception as ex:
         print(
             f"Erro parseando {search_word}: {ex}"
         )
-        try:
-            print(
-                "Trecho do JSON:",
-                lista_json[:500]
-            )
-        except:
-            pass
         return []
 
 async def buscar_items_ragnarok_async(

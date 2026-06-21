@@ -227,28 +227,6 @@ def limpar_descricao_rag(texto):
     texto = re.sub(r"\^[0-9A-Fa-f]{6}", "", texto)
     return texto
 
-@st.cache_data(ttl=86400)
-def buscar_item_ragnaplace(item_id):
-    try:
-        url = (
-            f"https://api.ragnaplace.com/api/db/item/"
-            f"{item_id}?gateway=laro-pt"
-        )
-
-        response = requests.get(
-            url,
-            timeout=10
-        )
-
-        if response.status_code != 200:
-            return None
-
-        return response.json()["data"]
-
-    except Exception as e:
-        print(e)
-        return None
-
 st.set_page_config(
     page_title="Ragnarok Search",
     layout="wide"
@@ -298,7 +276,7 @@ if st.button("Pesquisar"):
             st.subheader(f"📦 {item_pesquisado}")
             df_exibicao = df_item.copy()
             df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
-                lambda item_id: f"https://ragnaplace.com/pt/laro-pt/item/{item_id}"
+                lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}"
             )
             st.data_editor(
                 df_exibicao[
@@ -323,7 +301,7 @@ if st.button("Pesquisar"):
                     ),
                     "Detalhes": st.column_config.LinkColumn(
                         "Detalhes",
-                        display_text="🔎 ragnaplace"
+                        display_text="🔎 divinepride"
                     )
                 },
                 hide_index=True,

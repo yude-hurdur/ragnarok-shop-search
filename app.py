@@ -531,6 +531,9 @@ if st.button("Pesquisar"):
             df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
                 lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}"
             )
+            df_exibicao["Preço"] = df_exibicao["Preço"].apply(
+              lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else ""
+            )
             st.data_editor(
                 df_exibicao[
                     [

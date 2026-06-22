@@ -5,6 +5,194 @@ import requests
 import aiohttp
 import pandas as pd
 import streamlit as st
+import sqlite3
+
+DB_FILE = "ragnarok.db"
+
+USUARIOS = [
+    "ranos",
+    "jofrey",
+    "mono"
+]
+
+def get_conn():
+    return sqlite3.connect(
+        DB_FILE,
+        check_same_thread=False
+    )
+    
+def criar_banco():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS listas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            UNIQUE(usuario, nome)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS lista_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lista_id INTEGER NOT NULL,
+            nome_item TEXT NOT NULL,
+            FOREIGN KEY(lista_id)
+                REFERENCES listas(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def salvar_lista(usuario,nome_lista,itens):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id
+        FROM listas
+        WHERE usuario = ?
+        AND nome = ?
+        """,
+        (
+            usuario,
+            nome_lista
+        )
+    )
+    row = cur.fetchone()
+    if row:
+        lista_id = row[0]
+        cur.execute(
+            """
+            DELETE FROM lista_itens
+            WHERE lista_id = ?
+            """,
+            (
+                lista_id,
+            )
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO listas
+            (
+                usuario,
+                nome
+            )
+            VALUES (?, ?)
+            """,
+            (
+                usuario,
+                nome_lista
+            )
+        )
+        lista_id = cur.lastrowid
+    for item in itens:
+        cur.execute(
+            """
+            INSERT INTO lista_itens
+            (
+                lista_id,
+                nome_item
+            )
+            VALUES (?, ?)
+            """,
+            (
+                lista_id,
+                item
+            )
+        )
+    conn.commit()
+    conn.close()
+
+def listar_listas(usuario):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            id,
+            nome
+        FROM listas
+        WHERE usuario = ?
+        ORDER BY nome
+        """,
+        (
+            usuario,
+        )
+    )
+    dados = cur.fetchall()
+    conn.close()
+    return dados
+
+def buscar_nome_lista_selecionada(lista_escolhida):
+    if lista_escolhida:
+        return lista_escolhida
+    return ""
+
+def carregar_itens_lista(lista_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT nome_item
+        FROM lista_itens
+        WHERE lista_id = ?
+        ORDER BY nome_item
+        """,
+        (
+            lista_id,
+        )
+    )
+    dados = cur.fetchall()
+    conn.close()
+    return "\n".join(
+        [
+            x[0]
+            for x in dados
+        ]
+    )
+
+def excluir_lista(usuario,nome_lista):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id
+        FROM listas
+        WHERE usuario = ?
+        AND nome = ?
+        """,
+        (
+            usuario,
+            nome_lista
+        )
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return
+    lista_id = row[0]
+    cur.execute(
+        """
+        DELETE FROM lista_itens
+        WHERE lista_id = ?
+        """,
+        (
+            lista_id,
+        )
+    )
+    cur.execute(
+        """
+        DELETE FROM listas
+        WHERE id = ?
+        """,
+        (
+            lista_id,
+        )
+    )
+    conn.commit()
+    conn.close()
 
 def extrair_dados_items_do_html(response_text, search_word):
     try:
@@ -223,27 +411,93 @@ async def buscar_detalhes_item(
 def limpar_descricao_rag(texto):
     if not texto:
         return ""
-
     texto = re.sub(r"\^[0-9A-Fa-f]{6}", "", texto)
     return texto
+
+criar_banco()
 
 st.set_page_config(
     page_title="Ragnarok Search",
     layout="wide"
 )
 st.title("Ragnarok Market Search")
-itens = st.text_area(
-    "Itens (1 por linha)",
-    value="Morango\nRosário Dourado",
-    height=200
+col_esq, col_dir = st.columns(
+    [3, 1]
 )
-limite = st.number_input(
-    "Quantidade de resultados",
-    min_value=1,
-    max_value=20,
-    value=5
-)
-
+with col_esq:
+    usuario = st.selectbox(
+        "Usuário",
+        USUARIOS
+    )
+    listas = listar_listas(
+        usuario
+    )
+    mapa_listas = {
+        nome: lista_id
+        for lista_id, nome in listas
+    }
+    lista_escolhida = st.selectbox(
+        "Lista Salva",
+        [""] + list(mapa_listas.keys())
+    )
+    texto_lista = ""
+    if lista_escolhida:
+        texto_lista = carregar_itens_lista(
+            mapa_listas[
+                lista_escolhida
+            ]
+        )
+    itens = st.text_area(
+        "Itens (1 por linha)",
+        value=texto_lista,
+        height=200
+    )
+    limite = st.number_input(
+        "Quantidade de resultados",
+        min_value=1,
+        max_value=20,
+        value=5
+    )
+with col_dir:
+    with st.container(border=True):
+        st.subheader(
+            "Gerenciar Listas"
+        )
+        st.subheader("Salvar nova lista")
+        nome_padrao = ""
+        if lista_escolhida:
+            nome_padrao = lista_escolhida
+        nome_lista = st.text_input(
+            "Nome da Lista",
+            value=nome_padrao
+        )
+        if st.button(f':{'green'}[Upsert lista]'):
+            if not nome_lista.strip():
+                st.error("Informe um nome para a lista.")
+            else:
+                lista_itens = [
+                    x.strip()
+                    for x in itens.splitlines()
+                    if x.strip()
+                ]
+                salvar_lista(
+                    usuario,
+                    nome_lista.strip(),
+                    lista_itens
+                )
+                st.success("Lista salva com sucesso." )
+                st.rerun()
+        if lista_escolhida:
+            if st.button(f':{'red'}[Excluir lista]'):
+                excluir_lista(
+                    usuario,
+                    lista_escolhida
+                )
+                st.success(
+                    "Lista removida"
+                )
+                st.rerun()
+st.divider()
 if st.button("Pesquisar"):
     lista_itens = [
         x.strip()
@@ -259,7 +513,6 @@ if st.button("Pesquisar"):
         )
     if resultados:
         df = pd.DataFrame(resultados)
-        print(df)
         st.success(
             f"{len(df)} registros encontrados"
         )

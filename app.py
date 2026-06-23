@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import requests
 import aiohttp
 import pandas as pd
 import streamlit as st
@@ -9,11 +8,50 @@ import sqlite3
 
 DB_FILE = "ragnarok.db"
 
+MAX_CONCURRENT = 5
+DELAY_ENTRE_BATCHES = 0.5
+MAX_RETRIES = 5
+
 USUARIOS = [
     "ranos",
     "jofrey",
     "mono"
 ]
+
+async def request_com_retry(
+    session,
+    throttle,
+    method,
+    url,
+    **kwargs
+):
+    for tentativa in range(MAX_RETRIES):
+        async with throttle:
+            try:
+                async with session.request(
+                    method,
+                    url,
+                    **kwargs
+                ) as response:
+                    status = response.status
+                    if status == 429:
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            espera = float(retry_after)
+                        else:
+                            espera = DELAY_ENTRE_BATCHES * (2 ** tentativa)
+                        print(
+                            f"429 em {url} — aguardando {espera:.2f}s (tentativa {tentativa + 1})"
+                        )
+                        await asyncio.sleep(espera)
+                        continue
+                    texto = await response.text()
+                    await asyncio.sleep(DELAY_ENTRE_BATCHES)
+                    return status, texto
+            except Exception:
+                await asyncio.sleep(DELAY_ENTRE_BATCHES)
+                raise
+    return status, ""
 
 def get_conn():
     return sqlite3.connect(
@@ -124,11 +162,6 @@ def listar_listas(usuario):
     dados = cur.fetchall()
     conn.close()
     return dados
-
-def buscar_nome_lista_selecionada(lista_escolhida):
-    if lista_escolhida:
-        return lista_escolhida
-    return ""
 
 def carregar_itens_lista(lista_id):
     conn = get_conn()
@@ -260,6 +293,7 @@ def extrair_dados_items_do_html(response_text, search_word):
 
 async def buscar_items_ragnarok_async(
     session,
+    throttle,
     search_word,
     store_type="BUY",
     server_type="FREYA",
@@ -280,70 +314,102 @@ async def buscar_items_ragnarok_async(
         "Referer": "https://ro.gnjoylatam.com/",
         "Origin": "https://ro.gnjoylatam.com"
     }
+    erros = []
     try:
-        async with session.get(
+        status, response_text = await request_com_retry(
+            session,
+            throttle,
+            "GET",
             url,
             params=params,
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=10)
-        ) as response:
-            if response.status != 200:
-                print(
-                    f"Erro {response.status} para {search_word}"
-                )
-                return []
-            response_text = await response.text()
-            items_raw = extrair_dados_items_do_html(
-                response_text,
-                search_word
+        )
+        if status != 200:
+            print(
+                f"Erro {status} para {search_word}"
             )
-            if not items_raw:
-                return []
-            itens_filtrados = items_raw[:limit]
-            resultados = []
-            for item in items_raw[:limit]:
-                detalhes = await buscar_detalhes_item(
-                    session=session,
-                    search_word=search_word,
-                    svr_id=item["svrId"],
-                    map_id=item["mapId"],
-                    ssi=item["ssi"]
-                )
-                resultados.append({
-                    "Pesquisa": search_word,
-                    "Item": detalhes.get("itemFullName"),
-                    "Preço": item.get("itemPrice"),
-                    "Quantidade": item.get("itemCnt"),
-                    "Loja": item.get("storeName"),
-                    "Vendedor": item.get("itemSellerCharName"),
-                    "Mapa": detalhes.get("mapName"),
-                    "X": detalhes.get("xpos"),
-                    "Y": detalhes.get("ypos"),
-                    "Imagem": detalhes.get("databaseImgPath"),
-                    "ItemId": detalhes.get("itemId"),
-                })
-            return resultados
+            erros.append({
+                "Pesquisa": search_word,
+                "Etapa": "busca",
+                "Tipo": f"HTTP {status}",
+                "Detalhe": f"GET {url} retornou {status}",
+            })
+            return [], erros
+        items_raw = extrair_dados_items_do_html(
+            response_text,
+            search_word
+        )
+        if not items_raw:
+            return [], erros
+        tarefas_detalhe = [
+            buscar_detalhes_item(
+                session=session,
+                throttle=throttle,
+                search_word=search_word,
+                svr_id=item["svrId"],
+                map_id=item["mapId"],
+                ssi=item["ssi"]
+            )
+            for item in items_raw[:limit]
+        ]
+        detalhes_resultados = await asyncio.gather(*tarefas_detalhe)
+        resultados = []
+        for item, (detalhes, erro_detalhe) in zip(
+            items_raw[:limit], detalhes_resultados
+        ):
+            if erro_detalhe:
+                erros.append(erro_detalhe)
+            resultados.append({
+                "Pesquisa": search_word,
+                "Item": detalhes.get("itemFullName"),
+                "Preço": item.get("itemPrice"),
+                "Quantidade": item.get("itemCnt"),
+                "Loja": item.get("storeName"),
+                "Vendedor": item.get("itemSellerCharName"),
+                "Mapa": detalhes.get("mapName"),
+                "X": detalhes.get("xpos"),
+                "Y": detalhes.get("ypos"),
+                "Imagem": detalhes.get("databaseImgPath"),
+                "ItemId": detalhes.get("itemId"),
+            })
+        return resultados, erros
     except Exception as e:
         print(
             f"Erro em {search_word}: {e}"
         )
-        return []
+        erros.append({
+            "Pesquisa": search_word,
+            "Etapa": "busca",
+            "Tipo": type(e).__name__,
+            "Detalhe": str(e),
+        })
+        return [], erros
 
-async def consultar_itens(lista_itens, limite):
+async def consultar_itens(lista_itens, limite, on_progress=None):
+    throttle = asyncio.Semaphore(MAX_CONCURRENT)
+    final = []
+    erros = []
+    total = len(lista_itens)
     async with aiohttp.ClientSession() as session:
         tasks = [
             buscar_items_ragnarok_async(
                 session=session,
+                throttle=throttle,
                 search_word=item,
                 limit=limite
             )
             for item in lista_itens
         ]
-        resultados = await asyncio.gather(*tasks)
-    final = []
-    for grupo in resultados:
-        final.extend(grupo)
-    return final
+        concluidos = 0
+        for tarefa in asyncio.as_completed(tasks):
+            grupo, erros_grupo = await tarefa
+            final.extend(grupo)
+            erros.extend(erros_grupo)
+            concluidos += 1
+            if on_progress:
+                on_progress(concluidos, total)
+    return final, erros
 
 def extrair_detalhes_post(response_text):
     try:
@@ -363,6 +429,7 @@ def extrair_detalhes_post(response_text):
 
 async def buscar_detalhes_item(
     session,
+    throttle,
     search_word,
     svr_id,
     map_id,
@@ -394,25 +461,32 @@ async def buscar_detalhes_item(
         }
     ]
     try:
-        async with session.post(
+        status, texto = await request_com_retry(
+            session,
+            throttle,
+            "POST",
             url,
             headers=headers,
             json=payload
-        ) as response:
-            texto = await response.text()
-            detalhe = extrair_detalhes_post(texto)            
-            return detalhe
+        )
+        if status != 200:
+            return {}, {
+                "Pesquisa": search_word,
+                "Etapa": "detalhe",
+                "Tipo": f"HTTP {status}",
+                "Detalhe": f"POST detalhe ssi={ssi} retornou {status}",
+            }
+        return extrair_detalhes_post(texto), None
     except Exception as e:
         print(
             f"Erro detalhes {ssi}: {e}"
         )
-        return {}
-
-def limpar_descricao_rag(texto):
-    if not texto:
-        return ""
-    texto = re.sub(r"\^[0-9A-Fa-f]{6}", "", texto)
-    return texto
+        return {}, {
+            "Pesquisa": search_word,
+            "Etapa": "detalhe",
+            "Tipo": type(e).__name__,
+            "Detalhe": f"ssi={ssi}: {e}",
+        }
 
 criar_banco()
 
@@ -504,13 +578,38 @@ if st.button("Pesquisar"):
         for x in itens.splitlines()
         if x.strip()
     ]
-    with st.spinner("Consultando Ragnarok..."):
-        resultados = asyncio.run(
-            consultar_itens(
-                lista_itens,
-                limite
-            )
+    total_itens = len(lista_itens)
+    progresso = st.progress(
+        0,
+        text=f"0/{total_itens} itens pesquisados"
+    )
+
+    def atualizar_progresso(concluidos, total):
+        progresso.progress(
+            concluidos / total,
+            text=f"{concluidos}/{total} itens pesquisados"
         )
+
+    resultados, erros = asyncio.run(
+        consultar_itens(
+            lista_itens,
+            limite,
+            on_progress=atualizar_progresso
+        )
+    )
+    progresso.empty()
+    if erros:
+        itens_com_erro = sorted({e["Pesquisa"] for e in erros})
+        st.error(
+            f"{len(erros)} falha(s) de chamada em {len(itens_com_erro)} item(ns): "
+            + ", ".join(itens_com_erro)
+        )
+        with st.expander("Detalhes dos erros"):
+            st.dataframe(
+                pd.DataFrame(erros),
+                hide_index=True,
+                width="stretch"
+            )
     if resultados:
         df = pd.DataFrame(resultados)
         st.success(
@@ -519,47 +618,54 @@ if st.button("Pesquisar"):
         df = df.sort_values(
             ["Pesquisa", "Preço"]
         )
-        for item_pesquisado in lista_itens:
-            df_item = df[
-                df["Pesquisa"].str.lower()
-                == item_pesquisado.lower()
-            ]
-            if len(df_item) == 0:
-                continue
-            st.subheader(f"📦 {item_pesquisado}")
-            df_exibicao = df_item.copy()
-            df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
-                lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}".replace(".0", "")
+    else:
+        df = pd.DataFrame(
+            columns=["Pesquisa", "Preço"]
+        )
+    for item_pesquisado in lista_itens:
+        df_item = df[
+            df["Pesquisa"].str.lower()
+            == item_pesquisado.lower()
+        ]
+        st.subheader(f"📦 {item_pesquisado}")
+        if len(df_item) == 0:
+            st.info(
+                f"Nenhum resultado encontrado para '{item_pesquisado}'."
             )
-            df_exibicao["Preço"] = df_exibicao["Preço"].apply(
-              lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else ""
-            )
-            st.data_editor(
-                df_exibicao[
-                    [
-                        "Imagem",
-                        "Item",
-                        "Preço",
-                        "Quantidade",
-                        "Loja",
-                        "Vendedor",
-                        "Mapa",
-                        "X",
-                        "Y",
-                        "Detalhes",
-                    ]
-                ],
-                column_config={
-                    "Imagem": st.column_config.ImageColumn(
-                        "Imagem",
-                        help="Imagem do item",
-                        width="small"
-                    ),
-                    "Detalhes": st.column_config.LinkColumn(
-                        "Detalhes",
-                        display_text="🔎 divinepride"
-                    )
-                },
-                hide_index=True,
-                width="stretch"
-            )
+            continue
+        df_exibicao = df_item.copy()
+        df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
+            lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}".replace(".0", "")
+        )
+        df_exibicao["Preço"] = df_exibicao["Preço"].apply(
+          lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else ""
+        )
+        st.data_editor(
+            df_exibicao[
+                [
+                    "Imagem",
+                    "Item",
+                    "Preço",
+                    "Quantidade",
+                    "Loja",
+                    "Vendedor",
+                    "Mapa",
+                    "X",
+                    "Y",
+                    "Detalhes",
+                ]
+            ],
+            column_config={
+                "Imagem": st.column_config.ImageColumn(
+                    "Imagem",
+                    help="Imagem do item",
+                    width="small"
+                ),
+                "Detalhes": st.column_config.LinkColumn(
+                    "Detalhes",
+                    display_text="🔎 divinepride"
+                )
+            },
+            hide_index=True,
+            width="stretch"
+        )

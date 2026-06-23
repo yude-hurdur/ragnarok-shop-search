@@ -529,7 +529,7 @@ if st.button("Pesquisar"):
             st.subheader(f"📦 {item_pesquisado}")
             df_exibicao = df_item.copy()
             df_exibicao["Detalhes"] = df_exibicao["ItemId"].apply(
-                lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}"
+                lambda item_id: f"https://www.divine-pride.net/database/item/{item_id}".replace(".0", "")
             )
             df_exibicao["Preço"] = df_exibicao["Preço"].apply(
               lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else ""

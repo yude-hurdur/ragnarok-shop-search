@@ -4,7 +4,7 @@ import re
 import aiohttp
 import pandas as pd
 import streamlit as st
-import sqlite3
+import libsql_experimental as libsql
 
 DB_FILE = "ragnarok.db"
 
@@ -54,10 +54,13 @@ async def request_com_retry(
     return status, ""
 
 def get_conn():
-    return sqlite3.connect(
+    conn = libsql.connect(
         DB_FILE,
-        check_same_thread=False
+        sync_url=st.secrets["TURSO_URL"],
+        auth_token=st.secrets["TURSO_AUTH_TOKEN"]
     )
+    conn.sync()
+    return conn
     
 def criar_banco():
     conn = get_conn()

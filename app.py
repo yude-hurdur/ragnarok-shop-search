@@ -15,7 +15,7 @@ MAX_RETRIES = 5
 USUARIOS = [
     "ranos",
     "jofrey",
-    "monon"
+    "mono"
 ]
 
 async def request_com_retry(

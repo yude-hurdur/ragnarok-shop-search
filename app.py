@@ -498,16 +498,6 @@ st.title("Ragnarok Market Search")
 col_esq, col_dir = st.columns(
     [3, 1]
 )
-
-if st.button("Testar conexão GNJOY"):
-    import socket
-
-    try:
-        ip = socket.gethostbyname("ro.gnjoylatam.com")
-        st.success(f"DNS OK: {ip}")
-    except Exception as e:
-        st.error(f"DNS ERRO: {e}")
-
 with col_esq:
     usuario = st.selectbox(
         "Usuário",

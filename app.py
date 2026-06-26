@@ -448,7 +448,7 @@ async def buscar_detalhes_item(
     headers = {
         "Accept": "text/x-component",
         "Content-Type": "text/plain;charset=UTF-8",
-        "Next-Action": "403371b38682ba2dd997d1b755ba1bb20fadfa07a9",
+        "Next-Action": "40c3be8b07138137ce4d4ad75e26726c76f9cf6af8",
         "Origin": "https://ro.gnjoylatam.com",
         "Referer": url,
         "User-Agent": "Mozilla/5.0"
